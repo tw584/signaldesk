@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { reconcileCandidates, type CandidateStatus } from "../lib/decision-reconciliation";
 
 type Candidate = {
   id: number;
@@ -18,7 +19,7 @@ type Candidate = {
   signalType?: "idea" | "complaint";
   effort: string;
   monetization: string;
-  status: "early" | "review" | "shortlisted" | "rejected";
+  status: CandidateStatus;
   createdAt: string;
   evidence?: Array<{ source: string; title: string; originalText: string; author: string; publishedAt: string; engagement: number; rating?: number; url: string }>;
   feasibility?: { verdict: string; estimatedDays: number; screens: string[]; integrations: string[]; risks: string[] };
@@ -31,10 +32,6 @@ type RefreshPayload = {
   metrics: { collected: number; uniqueSignals: number; eligibleSignals: number; duplicatesRemoved: number; clusters: number; sourcesOk: number; sourcesTotal: number };
   refreshedAt: string;
 };
-
-function applyDecisions(candidates: Candidate[], decisions: Record<number, Candidate["status"]>) {
-  return candidates.map((candidate) => ({ ...candidate, status: decisions[candidate.id] ?? candidate.status }));
-}
 
 // Original demo hypotheses are retained unchanged for review, but are no longer shown as verified evidence.
 const fallbackIdeas: Candidate[] = [
@@ -84,13 +81,9 @@ export default function Home() {
       const response = await fetch("/api/refresh", { method: "POST" });
       if (!response.ok) throw new Error("Refresh failed");
       const payload = await response.json() as RefreshPayload;
-      const reconciled = applyDecisions(payload.candidates, savedDecisions);
+      const combined = reconcileCandidates(payload.candidates, existingIdeas, savedDecisions);
       setRefreshData(payload);
-      if (reconciled.length) {
-        const liveIds = new Set(reconciled.map((item) => item.id));
-        const combined = [...reconciled, ...existingIdeas.filter((item) => !liveIds.has(item.id) && item.status !== "early")]
-          .sort((a, b) => b.score - a.score)
-          .slice(0, 60);
+      if (combined.length) {
         setIdeas(combined);
         setSelected(combined[0]);
         if (combined.some((item) => item.status === "review")) setActiveStatus("review");

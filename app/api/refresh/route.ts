@@ -1,3 +1,5 @@
+import { summarizeSourceResults } from "../../../lib/source-results";
+
 type Evidence = {
   source: string;
   title: string;
@@ -137,7 +139,8 @@ async function appStoreComplaints(): Promise<Signal[]> {
 
 export async function POST() {
   const settled = await Promise.allSettled([hackerNews(), reddit(), github(), appStoreComplaints()]);
-  const collected = settled.flatMap((item) => item.status === "fulfilled" ? item.value : []);
+  const sourceSummary = summarizeSourceResults(SOURCE_NAMES, settled);
+  const collected = sourceSummary.collected;
   const uniqueSignals = Array.from(new Map(collected.map((item) => [`${item.source}:${item.url}:${item.author}:${item.originalText}`, item])).values());
   const signals = uniqueSignals
     .filter((item) => item.title && item.url && item.originalText)
@@ -178,12 +181,7 @@ export async function POST() {
   const reviewCandidates = allCandidates.filter((item) => item.status === "review").slice(0, 20);
   const candidates = [...earlyIdeas, ...earlyComplaints, ...reviewCandidates];
 
-  const sourceStatus = SOURCE_NAMES.map((source, index) => {
-    const result = settled[index];
-    return result.status === "fulfilled"
-      ? { source, status: "ok" as const, count: result.value.length }
-      : { source, status: "failed" as const, count: 0, error: result.reason instanceof Error ? result.reason.message : "Collection failed" };
-  });
+  const sourceStatus = sourceSummary.sourceStatus;
   return Response.json({
     candidates,
     quotas: { ideas: earlyIdeas.length, complaints: earlyComplaints.length, targetPerSection: 20 },
@@ -194,8 +192,8 @@ export async function POST() {
       eligibleSignals: signals.length,
       duplicatesRemoved: collected.length - uniqueSignals.length,
       clusters: clusters.length,
-      sourcesOk: sourceStatus.filter((item) => item.status === "ok").length,
-      sourcesTotal: sourceStatus.length,
+      sourcesOk: sourceSummary.sourcesOk,
+      sourcesTotal: sourceSummary.sourcesTotal,
     },
     refreshedAt: new Date().toISOString(),
   });
