@@ -3,6 +3,7 @@ import test from "node:test";
 import { applyDecisions, reconcileCandidates, type CandidateStatus } from "../lib/decision-reconciliation.ts";
 import { summarizeSourceResults } from "../lib/source-results.ts";
 import { clusterSignals, deduplicateSignals, feasibilityFor, processSignals, type Signal } from "../lib/signal-pipeline.ts";
+import { buildRevenuePlan, commercialStage, missingCommercialGates, REQUIRED_COMMERCIAL_GATES, type CommercialEvidenceRecord, type CommercialGate } from "../lib/commercial-opportunity.ts";
 
 type Candidate = { id: number; status: CandidateStatus; score: number; title: string };
 const candidate = (id: number, status: CandidateStatus, score = id): Candidate => ({ id, status, score, title: `Candidate ${id}` });
@@ -75,7 +76,9 @@ test("unknown authors do not satisfy the independent-person gate", () => {
 test("five verified voices across sources qualify only a feasible ten-day concern", () => {
   const feasible = Array.from({ length: 5 }, (_, index) => signal({ source: index === 0 ? "Reddit" : "App Store", author: `person-${index}`, url: `https://example.com/${index}`, clusterHint: "shared:offline", rating: index ? 1 : undefined }));
   const feasibleResult = processSignals(feasible).candidates[0];
-  assert.equal(feasibleResult.status, "review");
+  assert.equal(feasibleResult.status, "early");
+  assert.equal(feasibleResult.demandQualified, true);
+  assert.equal(feasibleResult.commercialStage, "signal");
   assert.equal(feasibleResult.feasibility.verdict, "Feasible");
 
   const tooLarge = feasible.map((item, index) => signal({ ...item, title: "I need sync across devices", originalText: "I am frustrated that sync across devices is missing", clusterHint: "shared:sync", url: `https://sync.example/${index}` }));
@@ -111,4 +114,53 @@ test("separate same-topic clusters receive distinct candidate identities", () =>
 test("negative engagement cannot produce a non-finite score", () => {
   const result = processSignals([signal({ engagement: -100 })]).candidates[0];
   assert.equal(Number.isFinite(result.score), true);
+});
+
+const commercialGates = (status: CommercialGate["status"]): CommercialGate[] => REQUIRED_COMMERCIAL_GATES.map((name) => ({ name, status, reasons: [], evidenceIds: status === "pass" ? [`evidence:${name}`] : [] }));
+const observedCommercialEvidence: CommercialEvidenceRecord[] = [...REQUIRED_COMMERCIAL_GATES.map((name) => ({ id: `evidence:${name}`, status: "observed" as const, checkedAt: "2026-08-12" })), { id: "pricing:1", status: "observed", checkedAt: "2026-08-12" }];
+
+test("commercial qualification fails closed when evidence is missing", () => {
+  const gates = commercialGates("pass").filter((gate) => gate.name !== "competitor_pricing");
+  const revenue = buildRevenuePlan({ model: "subscription", unitPriceMinor: 2_000, billingPeriod: "month", pricingBasisEvidenceIds: ["pricing:1"] });
+  assert.equal(commercialStage(gates, revenue, observedCommercialEvidence), "commercial_lead");
+  assert.deepEqual(missingCommercialGates(gates), ["competitor_pricing"]);
+});
+
+test("all commercial gates lead to human review, never automatic qualification", () => {
+  const revenue = buildRevenuePlan({ model: "subscription", unitPriceMinor: 2_000, billingPeriod: "month", pricingBasisEvidenceIds: ["pricing:1"] });
+  assert.equal(commercialStage(commercialGates("pass"), revenue, observedCommercialEvidence), "needs_review");
+});
+
+test("pass labels without evidence cannot enter commercial review", () => {
+  const gates = commercialGates("pass").map((gate) => ({ ...gate, evidenceIds: [] }));
+  const revenue = buildRevenuePlan({ model: "subscription", unitPriceMinor: 2_000, billingPeriod: "month", pricingBasisEvidenceIds: ["pricing:1"] });
+  assert.notEqual(commercialStage(gates, revenue), "needs_review");
+});
+
+test("unresolved or inferred evidence cannot enter commercial review", () => {
+  const revenue = buildRevenuePlan({ model: "subscription", unitPriceMinor: 2_000, billingPeriod: "month", pricingBasisEvidenceIds: ["pricing:1"] });
+  assert.notEqual(commercialStage(commercialGates("pass"), revenue, []), "needs_review");
+  const inferred = observedCommercialEvidence.map((item) => ({ ...item, status: "inferred" as const }));
+  assert.notEqual(commercialStage(commercialGates("pass"), revenue, inferred), "needs_review");
+});
+
+test("invalid prices and billing combinations fail closed", () => {
+  assert.throws(() => buildRevenuePlan({ model: "subscription", unitPriceMinor: 0, billingPeriod: "month" }));
+  assert.throws(() => buildRevenuePlan({ model: "subscription", unitPriceMinor: 2_000, billingPeriod: "one_time" }));
+  assert.throws(() => buildRevenuePlan({ model: "one_time", unitPriceMinor: 2_000, billingPeriod: "month" }));
+});
+
+test("one-time revenue is not mislabeled as MRR", () => {
+  const revenue = buildRevenuePlan({ model: "one_time", unitPriceMinor: 5_000, billingPeriod: "one_time" });
+  assert.deepEqual(revenue.scenarios.map((item) => item.monthlyRevenueMinor), [50_000, 250_000, 500_000]);
+  assert.equal(revenue.scenarios.every((item) => item.mrrMinor === null), true);
+  assert.equal(revenue.customersForOneThousandMrr, null);
+  assert.equal(commercialStage(commercialGates("pass"), revenue, observedCommercialEvidence), "commercial_lead");
+});
+
+test("subscription scenarios transparently calculate 10, 50, and 100 customers", () => {
+  const revenue = buildRevenuePlan({ model: "subscription", unitPriceMinor: 2_500, billingPeriod: "month" });
+  assert.deepEqual(revenue.scenarios.map((item) => item.mrrMinor), [25_000, 125_000, 250_000]);
+  assert.equal(revenue.customersForOneThousandMrr, 40);
+  assert.equal(revenue.customersForTenThousandMrr, 400);
 });

@@ -33,5 +33,6 @@ test("requires an achievable ten-day MVP before review", async () => {
 
   assert.match(refresh, /feasibility\.verdict === "Feasible"/);
   assert.match(refresh, /feasibility\.estimatedDays <= 10/);
-  assert.match(refresh, /status: qualified \? "review" : "early"/);
+  assert.match(refresh, /status: "early"/);
+  assert.match(refresh, /commercialStage: "signal"/);
 });

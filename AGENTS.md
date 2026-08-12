@@ -23,3 +23,24 @@ Persistence does not expand authority. Stop for credentials, public/private visi
 ## Existing-file review rule
 
 When suggesting changes to existing prose, preserve the original wording and present proposed replacements as reviewable comments with both versions highlighted in purple when the format supports it. For code or formats without comments/highlighting, preserve the original content and clearly present the proposal before replacement.
+
+## Approved commercial direction (August 12, 2026)
+
+The prior demand-signal and feasibility rules remain useful infrastructure, but they are not sufficient to label a result an opportunity. SignalDesk must distinguish early **Signals** from evidence-backed **Money Opportunities**.
+
+A Money Opportunity targets a freelancer, creator, small business, or specialized professional team and has a plausible path to $1,000-$10,000 monthly recurring revenue within 6-12 months. Prioritize subscriptions and paid workflow tools; allow one-time purchases and lead-generation products; deprioritize advertising-only ideas.
+
+Do not promote a Signal into Money Opportunities unless evidence supports all of these gates:
+
+- repeated painful workflow;
+- identifiable user and economic buyer;
+- current spending, costly workaround, or explicit willingness-to-pay evidence;
+- named competitors and observed pricing evidence;
+- a specific underserved wedge;
+- a reachable customer-acquisition channel;
+- a one-developer MVP within two weeks;
+- transparent revenue scenarios rather than a revenue guarantee.
+
+Each Money Opportunity brief must show the customer and buyer, costly job, original demand evidence, current workaround and spend, competitors and prices, underserved wedge, proposed paid product, suggested price, reachable acquisition channel, revenue scenarios at 10, 50, and 100 customers, MVP scope and cost, risks, evidence confidence, and a supported explanation of why it could make money.
+
+Never infer willingness to pay merely from complaints, engagement, or repeated requests. Missing commercial evidence must remain visibly missing and keep the item in Signals.

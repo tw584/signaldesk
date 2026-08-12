@@ -17,6 +17,9 @@ type Candidate = {
   uniquePeople?: number;
   sourceCount?: number;
   signalType?: "idea" | "complaint";
+  commercialStage?: "signal" | "researching" | "commercial_lead" | "needs_review";
+  missingCommercialGates?: string[];
+  demandQualified?: boolean;
   effort: string;
   monetization: string;
   status: CandidateStatus;
@@ -86,7 +89,6 @@ export default function Home() {
       if (combined.length) {
         setIdeas(combined);
         setSelected(combined[0]);
-        if (combined.some((item) => item.status === "review")) setActiveStatus("review");
       } else {
         setIdeas([]);
         setSelected(null);
@@ -127,7 +129,7 @@ export default function Home() {
   };
 
   const filtered = useMemo(() => ideas.filter((idea) =>
-    idea.status === activeStatus &&
+    (activeStatus === "review" ? idea.commercialStage === "needs_review" : idea.status === activeStatus) &&
     (activeStatus !== "early" || idea.signalType === earlyKind) &&
     (audience === "All audiences" || idea.audience === audience) &&
     (source === "All sources" || idea.source === source) &&
@@ -139,6 +141,9 @@ export default function Home() {
   const audiences = ["All audiences", ...Array.from(new Set(ideas.map((idea) => idea.audience)))];
   const sources = ["All sources", ...Array.from(new Set(ideas.map((idea) => idea.source)))];
   const count = (status: string) => ideas.filter((idea) => idea.status === status).length;
+  const commercialCount = ideas.filter((idea) => idea.commercialStage === "needs_review").length;
+  const switchStatus = (status: string) => { setActiveStatus(status); setSelected(null); };
+  const listLabels = activeStatus === "early" ? ["SIGNALS", "Ranked by research priority ↓"] : activeStatus === "review" ? ["MONEY OPPORTUNITIES", "All evidence gates passed · awaiting review"] : activeStatus === "shortlisted" ? ["SAVED RESEARCH", "Signals saved for commercial research"] : ["ARCHIVED SIGNALS", "Preserved for learning"];
 
   return (
     <main>
@@ -149,30 +154,30 @@ export default function Home() {
 
       <section className="hero">
         <div>
-          <p className="eyebrow">DAILY OPPORTUNITY BRIEF · {new Date().toLocaleDateString(undefined, { month: "long", day: "numeric" }).toUpperCase()}</p>
-          <h1>Problems worth building for.</h1>
-          <p className="lede">Evidence-backed product gaps, ranked for a solo builder with two weeks.</p>
+          <p className="eyebrow">COMMERCIAL OPPORTUNITY RADAR · {new Date().toLocaleDateString(undefined, { month: "long", day: "numeric" }).toUpperCase()}</p>
+          <h1>Research problems people may pay to solve.</h1>
+          <p className="lede">Small-business opportunities require evidence of demand, spending, a reachable buyer, and a credible wedge.</p>
         </div>
-        <div className="hero-score"><span>Qualified today</span><strong>{count("review")}</strong><small>{refreshData ? `${refreshData.metrics.sourcesOk}/${refreshData.metrics.sourcesTotal} sources responded` : "Awaiting refresh"}</small></div>
+        <div className="hero-score"><span>Money opportunities</span><strong>{commercialCount}</strong><small>All commercial gates required</small></div>
       </section>
 
       <section className="metric-row">
         <div><span>Signals collected</span><strong>{refreshData?.metrics.collected ?? "—"}</strong><small>{refreshData ? `${refreshData.metrics.sourcesOk}/${refreshData.metrics.sourcesTotal} sources responded` : "No measured run"}</small></div>
         <div><span>Duplicates removed</span><strong>{refreshData?.metrics.duplicatesRemoved ?? "—"}</strong><small>{refreshData ? `${refreshData.metrics.clusters} concern clusters` : "No measured run"}</small></div>
-        <div><span>Review queue</span><strong>{count("review")}</strong><small>Top opportunities</small></div>
+        <div><span>Commercial research</span><strong>{commercialCount}</strong><small>Nothing promoted without evidence</small></div>
         <div><span>Ideas / complaints</span><strong>{refreshData ? `${refreshData.quotas.ideas}/${refreshData.quotas.complaints}` : "—"}</strong><small>Target 20 each</small></div>
       </section>
 
       <section className="workspace">
         <aside className="sidebar">
           <nav>
-            <button className={activeStatus === "early" ? "active" : ""} onClick={() => setActiveStatus("early")}><span>◌ Early signals</span><b>{count("early")}</b></button>
-            <button className={activeStatus === "review" ? "active" : ""} onClick={() => setActiveStatus("review")}><span>◈ Review queue</span><b>{count("review")}</b></button>
-            <button className={activeStatus === "shortlisted" ? "active" : ""} onClick={() => setActiveStatus("shortlisted")}><span>★ Shortlisted</span><b>{count("shortlisted")}</b></button>
-            <button className={activeStatus === "rejected" ? "active" : ""} onClick={() => setActiveStatus("rejected")}><span>× Rejected</span><b>{count("rejected")}</b></button>
+            <button className={activeStatus === "early" ? "active" : ""} onClick={() => switchStatus("early")}><span>◌ Signals</span><b>{count("early")}</b></button>
+            <button className={activeStatus === "review" ? "active" : ""} onClick={() => switchStatus("review")}><span>◈ Money opportunities</span><b>{commercialCount}</b></button>
+            <button className={activeStatus === "shortlisted" ? "active" : ""} onClick={() => switchStatus("shortlisted")}><span>★ Saved research</span><b>{count("shortlisted")}</b></button>
+            <button className={activeStatus === "rejected" ? "active" : ""} onClick={() => switchStatus("rejected")}><span>× Archived</span><b>{count("rejected")}</b></button>
           </nav>
           <div className="side-block"><h3>SOURCE COVERAGE</h3>{(refreshData?.sourceStatus ?? []).map((item) => <div className="source-status" key={item.source} title={item.error}><span><i className={item.status === "failed" ? "failed" : ""} />{item.source}</span><small>{item.status === "ok" ? `${item.count} found` : "Failed"}</small></div>)}{!refreshData && <p className="source-placeholder">Source health appears after a measured refresh.</p>}</div>
-          <div className="method-card"><span>LOW-COST MODE</span><strong>Rules first, AI last.</strong><p>Score uses demand language, distinct people, source diversity, and engagement. Feasibility is a separate review gate.</p></div>
+          <div className="method-card"><span>FAIL-CLOSED RESEARCH</span><strong>Signals are not opportunities.</strong><p>Promotion requires buyer, spending, pricing, wedge, channel, build, and revenue evidence.</p></div>
         </aside>
 
         <section className="content">
@@ -186,44 +191,44 @@ export default function Home() {
             <select value={source} onChange={(e) => setSource(e.target.value)} aria-label="Filter source">{sources.map((item) => <option key={item}>{item}</option>)}</select>
             <button className="filter-button">Sliders · 2 weeks</button>
           </div>
-          <div className="list-head"><span>{filtered.length} CANDIDATES</span><span>Ranked by opportunity score ↓</span></div>
-          {refreshError && <div className="refresh-notice error"><strong>Collection failed.</strong><span>{refreshError}. Existing reviewed items were preserved.</span><button onClick={refresh}>Try again</button></div>}
-          {!refreshError && refreshData && (refreshData.quotas.ideas < refreshData.quotas.targetPerSection || refreshData.quotas.complaints < refreshData.quotas.targetPerSection) && <div className="refresh-notice"><strong>Evidence shortage reported.</strong><span>This run found {refreshData.quotas.ideas}/20 ideas and {refreshData.quotas.complaints}/20 complaints after qualification. SignalDesk will not fill gaps with fabricated candidates.</span></div>}
+          <div className="list-head"><span>{filtered.length} {listLabels[0]}</span><span>{listLabels[1]}</span></div>
+          {refreshError && <div className="refresh-notice error"><strong>Collection failed.</strong><span>{refreshError}. Existing saved and archived signals were preserved.</span><button onClick={refresh}>Try again</button></div>}
+          {!refreshError && refreshData && (refreshData.quotas.ideas < refreshData.quotas.targetPerSection || refreshData.quotas.complaints < refreshData.quotas.targetPerSection) && <div className="refresh-notice"><strong>Evidence shortage reported.</strong><span>This run found {refreshData.quotas.ideas}/20 ideas and {refreshData.quotas.complaints}/20 complaints after signal filtering. SignalDesk will not fill gaps with fabricated candidates.</span></div>}
           <div className="ideas">
             {filtered.map((idea, index) => <button type="button" key={idea.id} className={`idea-card ${selected?.id === idea.id ? "selected" : ""}`} onClick={() => setSelected(idea)}>
               <div className="rank">{String(index + 1).padStart(2, "0")}</div>
               <div className="idea-main">
                 <div className="idea-title"><h2>{idea.title}</h2><span className={`source ${sourceColor[idea.source] ?? "ink"}`}>{idea.source}</span></div>
                 <p>{idea.problem}</p>
-                <div className="tags"><span>{idea.audience}</span><span>{idea.category}</span><span>{idea.effort}</span><span>{idea.evidenceCount} signals</span></div>
+                <div className="tags"><span>{idea.audience}</span><span>{idea.category}</span><span>{idea.evidenceCount} evidence items</span><span>{idea.missingCommercialGates?.length ?? 0} money gates missing</span></div>
               </div>
-              <div className="score"><strong>{idea.score}</strong><span>OPPORTUNITY</span><small className={idea.confidence.toLowerCase()}>{idea.confidence} confidence</small></div>
+              <div className="score"><strong>{idea.score}</strong><span>RESEARCH PRIORITY</span><small className={idea.confidence.toLowerCase()}>Not commercially qualified</small></div>
             </button>)}
-            {filtered.length === 0 && <div className="empty"><strong>{refreshing ? "Collecting evidence…" : "No candidates in this view."}</strong><span>{refreshing ? "Source results will appear as they finish." : "Try another filter or inspect the reported source status."}</span></div>}
+            {filtered.length === 0 && <div className="empty"><strong>{refreshing ? "Collecting evidence…" : activeStatus === "review" ? "Nothing has passed commercial validation yet." : "No signals in this view."}</strong><span>{refreshing ? "Source results will appear as they finish." : activeStatus === "review" ? "A money opportunity must pass buyer, spending, competition, wedge, channel, build, revenue, and evidence-integrity gates." : "Try another filter or inspect the reported source status."}</span></div>}
           </div>
         </section>
 
         <aside className={`detail ${selected ? "open" : ""}`}>
           {selected && <>
             <button className="close" onClick={() => setSelected(null)} aria-label="Close details">×</button>
-            <span className="detail-kicker">OPPORTUNITY BRIEF</span>
+            <span className="detail-kicker">SIGNAL RESEARCH BRIEF</span>
             <h2>{selected.title}</h2>
             <p className="detail-problem">{selected.problem}</p>
-            <div className="detail-score"><div><strong>{selected.score}</strong><span>/ 100</span></div><p>{selected.status === "review" ? `Repeated by ${selected.uniquePeople} distinct people across ${selected.sourceCount} source${selected.sourceCount === 1 ? "" : "s"}. Engineering feasibility still requires the checklist below.` : `${selected.uniquePeople ?? 1} distinct people found so far. It needs five matching voices before entering review.`}</p></div>
-            {/* Original wording preserved for review; proposed evidence-first wording is displayed above. */}
-            <p className="preserved-copy">Original: “High reach and clear pain. Feasible inside the two-week constraint.”</p>
-            <h3>WHY IT RANKS</h3>
+            <div className="detail-score"><div><strong>{selected.score}</strong><span>/ 100</span></div><p>{selected.demandQualified ? `Repeated pain was found across ${selected.uniquePeople} identifiable people and ${selected.sourceCount} source${selected.sourceCount === 1 ? "" : "s"}; commercial evidence is still required.` : `${selected.uniquePeople ?? 0} identifiable people found so far. Repeated-pain evidence is still incomplete.`}</p></div>
+            {/* Original unsupported high-reach wording is preserved in repository history and intentionally not rendered. */}
+            <h3>RESEARCH PRIORITY INPUTS</h3>
             <div className="score-bars">{[["Distinct people", Math.min(100, (selected.uniquePeople ?? 1) * 16)], ["Independent sources", Math.min(100, (selected.sourceCount ?? 1) * 35)], ["Evidence captured", Math.min(100, selected.evidenceCount * 12)], ["MVP feasibility", selected.feasibility?.verdict === "Feasible" ? 90 : selected.feasibility?.verdict === "Conditional" ? 45 : 10]].map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b><i><em style={{ width: `${value}%` }} /></i></div>)}</div>
-            <h3>FEASIBILITY PROOF</h3>
+            <h3>BUILD FEASIBILITY HYPOTHESIS</h3>
             <div className="feasibility"><strong>{selected.feasibility?.verdict ?? "Unverified"}</strong><span>{selected.feasibility?.estimatedDays ? `${selected.feasibility.estimatedDays} estimated developer-days` : "No build claim until screens, integrations, and risks are decomposed."}</span></div>
             <ul>{selected.feasibility?.screens.map((screen) => <li key={screen}>Screen: {screen}</li>)}{selected.feasibility?.integrations.map((integration) => <li key={integration}>Integration: {integration}</li>)}{(selected.feasibility?.risks ?? ["Engineering scope has not been decomposed"]).map((risk) => <li key={risk}>Risk: {risk}</li>)}</ul>
-            <div className="two-col"><div><span>BUILD</span><strong>{selected.effort}</strong></div><div><span>BUSINESS MODEL</span><strong>{selected.monetization}</strong></div></div>
+            <h3>COMMERCIAL GATES STILL MISSING</h3>
+            <div className="tags">{(selected.missingCommercialGates ?? []).map((gate) => <span key={gate}>{gate}</span>)}</div>
+            <div className="two-col"><div><span>BUILD HYPOTHESIS</span><strong>{selected.effort}</strong></div><div><span>COMMERCIAL STATUS</span><strong>Research required</strong></div></div>
             <h3>ORIGINAL EVIDENCE · {selected.evidence?.length ?? 0} CAPTURED</h3>
             <div className="evidence-list">{(selected.evidence ?? []).map((item, index) => <article className="evidence-post" key={`${item.url}-${index}`}><div><span className={`source ${sourceColor[item.source] ?? "ink"}`}>{item.source}</span>{item.rating && <b>{item.rating}/5 stars</b>}<time>{new Date(item.publishedAt).toLocaleDateString()}</time></div><strong>{item.title}</strong><p>{item.originalText.slice(0, 500)}{item.originalText.length > 500 ? "…" : ""}</p><small>By {item.author} · {item.engagement} engagement</small><a href={item.url} target="_blank" rel="noreferrer">Open original post ↗</a></article>)}</div>
-            {/* Original link wording preserved; the proposal above shows each captured post and excerpt. */}
-            <p className="preserved-copy">Original: “Open public source search ↗”</p>
-            <p className="disclaimer">Candidate hypothesis, not proof of an empty market. Validate competitors and interview users before building.</p>
-            <div className="decision"><button className="reject" onClick={() => updateStatus(selected, "rejected")}>Reject</button><button className="shortlist" onClick={() => updateStatus(selected, "shortlisted")}>Shortlist ★</button></div>
+            {/* Original generic link wording is preserved in repository history; evidence-specific links are rendered above. */}
+            <p className="disclaimer">This is a problem signal, not a money opportunity. It cannot be promoted until buyer, spend, competitor pricing, wedge, channel, revenue, and build evidence pass review.</p>
+            <div className="decision"><button className="reject" onClick={() => updateStatus(selected, "rejected")}>Archive signal</button><button className="shortlist" onClick={() => updateStatus(selected, "shortlisted")}>Save for research ★</button></div>
           </>}
         </aside>
       </section>

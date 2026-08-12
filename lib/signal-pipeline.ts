@@ -4,6 +4,7 @@ export type Evidence = {
 };
 
 export type Signal = Evidence & { timestamp: number; clusterHint?: string };
+const COMMERCIAL_GATE_LABELS = ["repeated pain", "buyer clarity", "spending or willingness to pay", "competitor pricing", "underserved wedge", "reachable distribution", "ten-day build", "revenue plausibility", "evidence integrity"];
 
 const stopwords = new Set(["that", "this", "with", "from", "have", "there", "would", "could", "should", "about", "your", "when", "what", "which", "their", "they", "them", "just", "into", "some", "more", "very", "been", "were", "will", "app", "feature", "request"]);
 
@@ -116,11 +117,11 @@ export function processSignals(collected: Signal[]) {
       id: stableId(clusterIdentity(evidence)), title: lead.title.slice(0, 96), problem: lead.originalText.slice(0, 240), ...inferred,
       source: lead.source, sourceUrl: lead.url, score: qualified ? opportunity : Math.min(opportunity, 79), confidence: qualified ? "High" : corroborated ? "Medium" : "Early",
       evidenceCount: evidence.length, uniquePeople, sourceCount: sources.size, signalType: lead.source === "App Store" ? "complaint" : "idea", evidence: evidence.slice(0, 8).map(publicEvidence),
-      effort: feasibility.estimatedDays ? `${feasibility.estimatedDays} developer-days` : "Needs feasibility review", monetization: "Needs user validation", status: qualified ? "review" : "early", feasibility, createdAt: "Just now",
+      effort: feasibility.estimatedDays ? `${feasibility.estimatedDays} developer-days` : "Needs feasibility review", monetization: "Commercial evidence not researched", status: "early", commercialStage: "signal",
+      missingCommercialGates: COMMERCIAL_GATE_LABELS.filter((gate) => !((gate === "repeated pain" && corroborated) || (gate === "ten-day build" && feasibility.verdict === "Feasible" && feasibility.estimatedDays <= 10))), demandQualified: corroborated, feasibility, createdAt: "Just now",
     };
   }).sort((a, b) => b.score - a.score);
   const earlyIdeas = allCandidates.filter((item) => item.status === "early" && item.signalType === "idea").slice(0, 20);
   const earlyComplaints = allCandidates.filter((item) => item.status === "early" && item.signalType === "complaint").slice(0, 20);
-  const reviewCandidates = allCandidates.filter((item) => item.status === "review").slice(0, 20);
-  return { candidates: [...earlyIdeas, ...earlyComplaints, ...reviewCandidates], uniqueSignals, eligibleSignals, clusters, earlyIdeas, earlyComplaints };
+  return { candidates: [...earlyIdeas, ...earlyComplaints], uniqueSignals, eligibleSignals, clusters, earlyIdeas, earlyComplaints };
 }
