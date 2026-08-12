@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type Candidate = {
   id: number;
@@ -23,6 +23,18 @@ type Candidate = {
   evidence?: Array<{ source: string; title: string; originalText: string; author: string; publishedAt: string; engagement: number; rating?: number; url: string }>;
   feasibility?: { verdict: string; estimatedDays: number; screens: string[]; integrations: string[]; risks: string[] };
 };
+
+type RefreshPayload = {
+  candidates: Candidate[];
+  quotas: { ideas: number; complaints: number; targetPerSection: number };
+  sourceStatus: Array<{ source: string; status: "ok" | "failed"; count: number; error?: string }>;
+  metrics: { collected: number; uniqueSignals: number; eligibleSignals: number; duplicatesRemoved: number; clusters: number; sourcesOk: number; sourcesTotal: number };
+  refreshedAt: string;
+};
+
+function applyDecisions(candidates: Candidate[], decisions: Record<number, Candidate["status"]>) {
+  return candidates.map((candidate) => ({ ...candidate, status: decisions[candidate.id] ?? candidate.status }));
+}
 
 // Original demo hypotheses are retained unchanged for review, but are no longer shown as verified evidence.
 const fallbackIdeas: Candidate[] = [
@@ -47,6 +59,7 @@ const fallbackIdeas: Candidate[] = [
   { id: 19, title: "Warranty claim packager", problem: "Consumers cannot quickly assemble receipts, photos, and serial numbers for claims.", audience: "Consumers", source: "App reviews", sourceUrl: "https://www.google.com/search?q=warranty+tracker+app+reviews", category: "Personal admin", score: 65, confidence: "Medium", evidenceCount: 7, effort: "7‑10 days", monetization: "$15 one-time", status: "review", createdAt: "Today" },
   { id: 20, title: "Open-source setup gap finder", problem: "Maintainers repeatedly answer installation questions missing from documentation.", audience: "Developers", source: "GitHub", sourceUrl: "https://github.com/issues?q=is%3Aissue+label%3Adocumentation+installation", category: "Developer tools", score: 64, confidence: "High", evidenceCount: 15, effort: "7‑10 days", monetization: "$9/repo/mo", status: "review", createdAt: "Today" },
 ];
+void fallbackIdeas;
 
 const sourceColor: Record<string, string> = { Reddit: "coral", X: "ink", HN: "amber", GitHub: "violet", "App reviews": "blue", "App Store": "blue", "小红书": "red", Nextdoor: "green" };
 
@@ -59,37 +72,64 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Candidate | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [lastRefresh, setLastRefresh] = useState("Today, 8:05 AM");
+  const [lastRefresh, setLastRefresh] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [refreshData, setRefreshData] = useState<RefreshPayload | null>(null);
+  const [decisions, setDecisions] = useState<Record<number, Candidate["status"]>>({});
+
+  const runRefresh = useCallback(async (savedDecisions: Record<number, Candidate["status"]>, existingIdeas: Candidate[] = []) => {
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      const response = await fetch("/api/refresh", { method: "POST" });
+      if (!response.ok) throw new Error("Refresh failed");
+      const payload = await response.json() as RefreshPayload;
+      const reconciled = applyDecisions(payload.candidates, savedDecisions);
+      setRefreshData(payload);
+      if (reconciled.length) {
+        const liveIds = new Set(reconciled.map((item) => item.id));
+        const combined = [...reconciled, ...existingIdeas.filter((item) => !liveIds.has(item.id) && item.status !== "early")]
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 60);
+        setIdeas(combined);
+        setSelected(combined[0]);
+        if (combined.some((item) => item.status === "review")) setActiveStatus("review");
+      } else {
+        setIdeas([]);
+        setSelected(null);
+      }
+      setLastRefresh(payload.refreshedAt);
+    } catch (error) {
+      setRefreshError(error instanceof Error ? error.message : "Unable to refresh signals");
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
-    fetch("/api/decisions")
-      .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((payload: { decisions: Array<{ candidateId: number; status: Candidate["status"] }> }) => {
-        const decisions = Object.fromEntries(payload.decisions.map((item) => [item.candidateId, item.status]));
-        setIdeas((current) => current.map((idea) => ({ ...idea, status: decisions[idea.id] ?? idea.status })));
-      })
-      .catch(() => {
-        const saved = window.localStorage.getItem("signaldesk-decisions");
-        if (saved) {
-          const decisions = JSON.parse(saved) as Record<number, Candidate["status"]>;
-          setIdeas((current) => current.map((idea) => ({ ...idea, status: decisions[idea.id] ?? idea.status })));
-        }
-      });
-    fetch("/api/refresh", { method: "POST" })
-      .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((payload: { candidates: Candidate[] }) => {
-        setIdeas(payload.candidates);
-        setSelected(payload.candidates[0] ?? null);
-        if (payload.candidates.some((item) => item.status === "review")) setActiveStatus("review");
-      })
-      .catch(() => undefined);
-  }, []);
+    const load = async () => {
+      let savedDecisions: Record<number, Candidate["status"]> = {};
+      try {
+        const response = await fetch("/api/decisions");
+        if (!response.ok) throw new Error("Decision store unavailable");
+        const payload = await response.json() as { decisions: Array<{ candidateId: number; status: Candidate["status"] }> };
+        savedDecisions = Object.fromEntries(payload.decisions.map((item) => [item.candidateId, item.status]));
+      } catch {
+        try { savedDecisions = JSON.parse(window.localStorage.getItem("signaldesk-decisions") ?? "{}"); } catch { savedDecisions = {}; }
+      }
+      setDecisions(savedDecisions);
+      await runRefresh(savedDecisions, []);
+    };
+    void load();
+  }, [runRefresh]);
 
   const updateStatus = (idea: Candidate, status: Candidate["status"]) => {
     const next = ideas.map((item) => item.id === idea.id ? { ...item, status } : item);
+    const nextDecisions = { ...decisions, [idea.id]: status };
     setIdeas(next);
+    setDecisions(nextDecisions);
     setSelected({ ...idea, status });
-    window.localStorage.setItem("signaldesk-decisions", JSON.stringify(Object.fromEntries(next.map((item) => [item.id, item.status]))));
+    window.localStorage.setItem("signaldesk-decisions", JSON.stringify(nextDecisions));
     fetch("/api/decisions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ candidateId: idea.id, status }) }).catch(() => undefined);
   };
 
@@ -101,25 +141,7 @@ export default function Home() {
     `${idea.title} ${idea.problem} ${idea.category}`.toLowerCase().includes(query.toLowerCase())
   ), [ideas, activeStatus, earlyKind, audience, source, query]);
 
-  const refresh = async () => {
-    setRefreshing(true);
-    try {
-      const response = await fetch("/api/refresh", { method: "POST" });
-      if (!response.ok) throw new Error("Refresh failed");
-      const payload = await response.json() as { candidates: Candidate[] };
-      if (payload.candidates.length) {
-        const liveIds = new Set(payload.candidates.map((item) => item.id));
-        const combined = [...payload.candidates, ...ideas.filter((item) => !liveIds.has(item.id) && item.status !== "early")]
-          .sort((a, b) => b.score - a.score)
-          .slice(0, 60);
-        setIdeas(combined);
-        setSelected(combined[0]);
-      }
-      setLastRefresh("Just now");
-    } finally {
-      setRefreshing(false);
-    }
-  };
+  const refresh = () => runRefresh(decisions, ideas);
 
   const audiences = ["All audiences", ...Array.from(new Set(ideas.map((idea) => idea.audience)))];
   const sources = ["All sources", ...Array.from(new Set(ideas.map((idea) => idea.source)))];
@@ -129,23 +151,23 @@ export default function Home() {
     <main>
       <header className="topbar">
         <div className="brand"><span className="brandmark">S</span><span>SignalDesk</span><em>Opportunity radar</em></div>
-        <div className="top-actions"><span className="freshness"><i /> Updated {lastRefresh}</span><button className="refresh" onClick={refresh} disabled={refreshing}>{refreshing ? "Scanning…" : "Refresh signals"}</button><button className="icon-button" aria-label="Settings">⚙</button></div>
+        <div className="top-actions"><span className={`freshness ${refreshError ? "failed" : ""}`}><i /> {refreshing ? "Scanning sources…" : refreshError ? "Refresh failed" : lastRefresh ? `Updated ${new Date(lastRefresh).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Not refreshed"}</span><button className="refresh" onClick={refresh} disabled={refreshing}>{refreshing ? "Scanning…" : "Refresh signals"}</button></div>
       </header>
 
       <section className="hero">
         <div>
-          <p className="eyebrow">DAILY OPPORTUNITY BRIEF · AUGUST 12</p>
+          <p className="eyebrow">DAILY OPPORTUNITY BRIEF · {new Date().toLocaleDateString(undefined, { month: "long", day: "numeric" }).toUpperCase()}</p>
           <h1>Problems worth building for.</h1>
           <p className="lede">Evidence-backed product gaps, ranked for a solo builder with two weeks.</p>
         </div>
-        <div className="hero-score"><span>Today’s signal quality</span><strong>82</strong><small>Strong evidence</small></div>
+        <div className="hero-score"><span>Qualified today</span><strong>{count("review")}</strong><small>{refreshData ? `${refreshData.metrics.sourcesOk}/${refreshData.metrics.sourcesTotal} sources responded` : "Awaiting refresh"}</small></div>
       </section>
 
       <section className="metric-row">
-        <div><span>Signals scanned</span><strong>1,248</strong><small>7 sources</small></div>
-        <div><span>Duplicates removed</span><strong>64%</strong><small>812 clustered</small></div>
+        <div><span>Signals collected</span><strong>{refreshData?.metrics.collected ?? "—"}</strong><small>{refreshData ? `${refreshData.metrics.sourcesOk}/${refreshData.metrics.sourcesTotal} sources responded` : "No measured run"}</small></div>
+        <div><span>Duplicates removed</span><strong>{refreshData?.metrics.duplicatesRemoved ?? "—"}</strong><small>{refreshData ? `${refreshData.metrics.clusters} concern clusters` : "No measured run"}</small></div>
         <div><span>Review queue</span><strong>{count("review")}</strong><small>Top opportunities</small></div>
-        <div><span>Est. AI cost</span><strong>$0.08</strong><small>Shortlist only</small></div>
+        <div><span>Ideas / complaints</span><strong>{refreshData ? `${refreshData.quotas.ideas}/${refreshData.quotas.complaints}` : "—"}</strong><small>Target 20 each</small></div>
       </section>
 
       <section className="workspace">
@@ -156,8 +178,8 @@ export default function Home() {
             <button className={activeStatus === "shortlisted" ? "active" : ""} onClick={() => setActiveStatus("shortlisted")}><span>★ Shortlisted</span><b>{count("shortlisted")}</b></button>
             <button className={activeStatus === "rejected" ? "active" : ""} onClick={() => setActiveStatus("rejected")}><span>× Rejected</span><b>{count("rejected")}</b></button>
           </nav>
-          <div className="side-block"><h3>SOURCE COVERAGE</h3>{["Reddit", "Hacker News", "GitHub Issues", "App Store complaints", "X / public search", "小红书 / public search"].map((item, index) => <div className="source-status" key={item}><span><i className={index > 3 ? "limited" : ""} />{item}</span><small>{index > 3 ? "Limited" : "Live"}</small></div>)}</div>
-          <div className="method-card"><span>LOW-COST MODE</span><strong>Rules first, AI last.</strong><p>Only finalists receive optional translation or synthesis.</p><button onClick={() => alert("Score = frequency 25 + pain 20 + gap 20 + ease 15 + willingness to pay 10 + distribution 5 + evidence 5.")}>View methodology →</button></div>
+          <div className="side-block"><h3>SOURCE COVERAGE</h3>{(refreshData?.sourceStatus ?? []).map((item) => <div className="source-status" key={item.source} title={item.error}><span><i className={item.status === "failed" ? "failed" : ""} />{item.source}</span><small>{item.status === "ok" ? `${item.count} found` : "Failed"}</small></div>)}{!refreshData && <p className="source-placeholder">Source health appears after a measured refresh.</p>}</div>
+          <div className="method-card"><span>LOW-COST MODE</span><strong>Rules first, AI last.</strong><p>Score uses demand language, distinct people, source diversity, and engagement. Feasibility is a separate review gate.</p></div>
         </aside>
 
         <section className="content">
@@ -172,8 +194,10 @@ export default function Home() {
             <button className="filter-button">Sliders · 2 weeks</button>
           </div>
           <div className="list-head"><span>{filtered.length} CANDIDATES</span><span>Ranked by opportunity score ↓</span></div>
+          {refreshError && <div className="refresh-notice error"><strong>Collection failed.</strong><span>{refreshError}. Existing reviewed items were preserved.</span><button onClick={refresh}>Try again</button></div>}
+          {!refreshError && refreshData && (refreshData.quotas.ideas < refreshData.quotas.targetPerSection || refreshData.quotas.complaints < refreshData.quotas.targetPerSection) && <div className="refresh-notice"><strong>Evidence shortage reported.</strong><span>This run found {refreshData.quotas.ideas}/20 ideas and {refreshData.quotas.complaints}/20 complaints after qualification. SignalDesk will not fill gaps with fabricated candidates.</span></div>}
           <div className="ideas">
-            {filtered.map((idea, index) => <article key={idea.id} className={`idea-card ${selected?.id === idea.id ? "selected" : ""}`} onClick={() => setSelected(idea)}>
+            {filtered.map((idea, index) => <button type="button" key={idea.id} className={`idea-card ${selected?.id === idea.id ? "selected" : ""}`} onClick={() => setSelected(idea)}>
               <div className="rank">{String(index + 1).padStart(2, "0")}</div>
               <div className="idea-main">
                 <div className="idea-title"><h2>{idea.title}</h2><span className={`source ${sourceColor[idea.source] ?? "ink"}`}>{idea.source}</span></div>
@@ -181,8 +205,8 @@ export default function Home() {
                 <div className="tags"><span>{idea.audience}</span><span>{idea.category}</span><span>{idea.effort}</span><span>{idea.evidenceCount} signals</span></div>
               </div>
               <div className="score"><strong>{idea.score}</strong><span>OPPORTUNITY</span><small className={idea.confidence.toLowerCase()}>{idea.confidence} confidence</small></div>
-            </article>)}
-            {filtered.length === 0 && <div className="empty"><strong>No ideas here yet.</strong><span>Try another filter or review status.</span></div>}
+            </button>)}
+            {filtered.length === 0 && <div className="empty"><strong>{refreshing ? "Collecting evidence…" : "No candidates in this view."}</strong><span>{refreshing ? "Source results will appear as they finish." : "Try another filter or inspect the reported source status."}</span></div>}
           </div>
         </section>
 
